@@ -1,0 +1,1 @@
+        opcoes.append(("Consultas", "Estatisticas de\nconsultas por especialidade", "📋"))

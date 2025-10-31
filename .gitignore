@@ -1,0 +1,9 @@
+# Ignora pastas de cache do Python
+__pycache__/
+**/__pycache__/
+
+# Ignora ambiente virtual
+.venv/
+
+# Ignora databases
+databases/

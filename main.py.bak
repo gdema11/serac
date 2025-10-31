@@ -1,0 +1,1017 @@
+    def executar_mescla_pasta(self):
+        """Inicia a mesclagem de todos os arquivos Excel da pasta selecionada"""
+        if self.modo_input.get() != "pasta":
+            messagebox.showinfo(
+                "Modo arquivo selecionado",
+                "Mude para 'Selecionar pasta' para mesclar arquivos de uma pasta."
+            )
+            return
+        if self.executando:
+if self.executando:
+            self.adicionar_log("Uma operacao ja esta em andamento. Aguarde a finalizacao.")
+            messagebox.showinfo(
+                "Operacao em andamento",
+                "Aguarde a finalizacao da operacao atual antes de iniciar outra mesclagem."
+            )
+            return
+
+        if not self.pasta_mescla:
+            self.adicionar_log("Erro: Nenhuma pasta selecionada para mescla.")
+            messagebox.showwarning(
+                "Selecione uma pasta",
+                "Selecione uma pasta antes de mesclar os arquivos."
+            )
+            return
+
+        pasta_path = Path(self.pasta_mescla)
+        padroes = ("*.xlsx", "*.xls", "*.xlsm")
+        arquivos = []
+        for padrao in padroes:
+            arquivos.extend(sorted(pasta_path.glob(padrao)))
+
+        arquivos = [arquivo for arquivo in arquivos if arquivo.is_file()]
+        arquivos.sort(key=lambda p: p.name.lower())
+
+        if not arquivos:
+            self.adicionar_log("Nenhum arquivo Excel encontrado na pasta selecionada.")
+            messagebox.showinfo(
+                "Nenhum arquivo encontrado",
+                "Nao foram encontrados arquivos .xls, .xlsx ou .xlsm na pasta selecionada."
+            )
+            return
+
+        sugestao = f"mesclado_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        destino = filedialog.asksaveasfilename(
+            title="Salvar arquivo mesclado",
+            defaultextension=".xlsx",
+            filetypes=[("Arquivo Excel", "*.xlsx")],
+            initialfile=sugestao,
+            initialdir=str(pasta_path)
+        )
+
+        if not destino:
+            self.adicionar_log("Mesclagem cancelada pelo usuario.")
+            return
+
+        self.adicionar_log(f"Pasta selecionada: {self.pasta_mescla}")
+        self.adicionar_log(f"{len(arquivos)} arquivo(s) encontrados para mescla.")
+        self.adicionar_log(f"Arquivo final sera salvo em: {destino}")
+
+        self.executando = True
+        self.atualizar_estado_botoes()
+
+        thread = threading.Thread(
+            target=self._executar_mescla_thread,
+            args=(arquivos, Path(destino)),
+            daemon=True
+        )
+        thread.start()
+
+    def _executar_mescla_thread(self, arquivos, destino):
+        """Mescla os arquivos Excel selecionados em uma unica planilha"""
+        log = self._log_async
+        total = len(arquivos)
+        dataframes = []
+        falhas = []
+
+        try:
+            log(f"Iniciando mesclagem de {total} arquivo(s).")
+            self.atualizar_progresso(0.05)
+
+            for indice, arquivo in enumerate(arquivos, start=1):
+                log(f"Lendo arquivo ({indice}/{total}): {arquivo.name}")
+                try:
+                    df = pd.read_excel(arquivo)
+                    df.insert(0, "arquivo_origem", arquivo.name)
+                    dataframes.append(df)
+                except Exception as e:
+                    falhas.append((arquivo.name, str(e)))
+                    log(f"Falha ao ler '{arquivo.name}': {e}")
+                progresso = 0.05 + 0.75 * (indice / total)
+                self.atualizar_progresso(min(progresso, 0.9))
+
+            if not dataframes:
+                log("Nenhum arquivo foi processado com sucesso. Mesclagem cancelada.")
+                self.after(0, lambda: messagebox.showerror(
+                    "Mesclagem interrompida",
+                    "Nenhum arquivo foi processado com sucesso. Verifique os arquivos selecionados."
+                ))
+                return
+
+            try:
+                combinado = pd.concat(dataframes, ignore_index=True)
+            except Exception as e:
+                log(f"Erro ao combinar os dados: {e}")
+                self.after(0, lambda: messagebox.showerror(
+                    "Erro ao combinar",
+                    f"Nao foi possivel combinar os dados: {e}"
+                ))
+                return
+
+            try:
+                destino.parent.mkdir(parents=True, exist_ok=True)
+                combinado.to_excel(destino, index=False)
+            except Exception as e:
+                log(f"Erro ao salvar o arquivo mesclado: {e}")
+                self.after(0, lambda: messagebox.showerror(
+                    "Erro ao salvar",
+                    f"Nao foi possivel salvar o arquivo mesclado: {e}"
+                ))
+                return
+
+            log(f"Mesclagem concluida com {len(dataframes)} arquivo(s) unido(s).")
+            if falhas:
+                log(f"{len(falhas)} arquivo(s) foram ignorados por erro de leitura.")
+            self.atualizar_progresso(1.0)
+            self.after(0, lambda: messagebox.showinfo(
+                "Mesclagem concluida",
+                f"Arquivo mesclado salvo em:\n{destino}"
+            ))
+        except Exception as e:
+            log(f"Erro inesperado durante a mesclagem: {e}")
+            self.after(0, lambda: messagebox.showerror(
+                "Erro inesperado",
+                f"Ocorreu um erro inesperado durante a mesclagem: {e}"
+            ))
+        finally:
+            self.executando = False
+            self.atualizar_progresso(0)
+            self.after(0, self.atualizar_estado_botoes)
+
+    def executar_automacao(self):
+        """Executa a automacao selecionada"""
+        if self.modo_input.get() != "arquivo":
+            messagebox.showinfo(
+                "Modo pasta selecionado",
+                "Altere para 'Selecionar arquivo' para executar uma automacao."
+            )
+            return
+        if not self.validar_inputs():
+            return
+
+        # Desabilita controles durante execuÃ§Ã£o
+        self.executando = True
+        self.atualizar_estado_botoes()
+        
+        # Inicia thread para nÃ£o travar a interface
+        thread = threading.Thread(target=self._executar_automacao_thread, daemon=True)
+        thread.start()
+        
+    def _validar_tipo_arquivo(self, arquivo, tipo_automacao):
+        """Valida se o arquivo Ã© compatÃ­vel com o tipo de automaÃ§Ã£o selecionado"""
+        try:
+                        # Tenta ler o arquivo para anÃ¡lise bÃ¡sica
+            df = pd.read_excel(arquivo, nrows=15)  # L? apenas as primeiras 15 linhas
+            tipo_chave = self._normalizar_chave_tipo(tipo_automacao)
+
+            if "beneficiario" in tipo_chave:
+                conteudo_str = df.to_string().lower()
+                if any(keyword in conteudo_str for keyword in ['beneficiar', 'ranking', 'certificado']):
+                    return True, ""
+                else:
+                    return False, "O arquivo selecionado n?o parece ser um relat?rio de benefici?rios."
+
+            elif "prestador" in tipo_chave:
+                conteudo_str = df.to_string().lower()
+                if any(keyword in conteudo_str for keyword in ['prestador', 'valor', 'codigo']):
+                    return True, ""
+                else:
+                    return False, "O arquivo selecionado n?o parece ser um relat?rio de prestadores."
+
+            elif "procedimento" in tipo_chave:
+                conteudo_str = df.to_string().lower()
+                if any(keyword in conteudo_str for keyword in ['procedimento', 'custo', 'ranking']):
+                    return True, ""
+                else:
+                    return False, "O arquivo selecionado n?o parece ser um relat?rio de procedimentos."
+
+            return True, ""  # Por padr?o, aceita o arquivo
+            
+        except Exception as e:
+            # Se nÃ£o conseguir ler o arquivo, aceita mas avisa
+            return True, f"âš ï¸ NÃ£o foi possÃ­vel validar o tipo do arquivo: {str(e)}"
+
+    def _executar_automacao_thread(self):
+        """Executa a automaÃ§Ã£o em thread separada"""
+        try:
+            tipo = self._normalizar_tipo(self.automacao_var.get())
+            tipo_chave = self._normalizar_chave_tipo(tipo)
+            arquivo = self.arquivo_selecionado
+            
+            self.adicionar_log("ðŸš€ Iniciando processamento...")
+            self.atualizar_progresso(0.1)
+            
+            # ValidaÃ§Ã£o do tipo de arquivo
+            self.adicionar_log("ðŸ” Validando compatibilidade do arquivo...")
+            arquivo_valido, msg_erro = self._validar_tipo_arquivo(arquivo, tipo)
+            
+            if not arquivo_valido:
+                self.adicionar_log(f"âŒ {msg_erro}")
+                self.adicionar_log("ðŸ’¡ Verifique se vocÃª selecionou o arquivo correto para o tipo de automaÃ§Ã£o escolhido.")
+                messagebox.showerror("Arquivo IncompatÃ­vel", 
+                    f"{msg_erro}\n\n"
+                    f"Tipo selecionado: {tipo}\n"
+                    f"Arquivo: {os.path.basename(arquivo)}\n\n"
+                    f"Por favor, selecione o arquivo correto ou altere o tipo de automaÃ§Ã£o.")
+                return
+            elif msg_erro:
+                self.adicionar_log(msg_erro)
+            else:
+                self.adicionar_log("âœ… Arquivo compatÃ­vel com o tipo de automaÃ§Ã£o selecionado")
+            
+            acoes = {
+                "beneficiario": self._executar_beneficiario,
+                "prestador": self._executar_prestadores,
+                "prestadores": self._executar_prestadores,
+                "procedimento": self._executar_procedimentos,
+                "procedimentos": self._executar_procedimentos,
+                "consultas": self._executar_consultas,
+                "exames": self._executar_exames,
+                "terapias": self._executar_terapias,
+                "sinistralidade": self._executar_sinistralidade,
+                "diagnostico": self._executar_diagnosticos,
+                "diagnosticos": self._executar_diagnosticos,
+            }
+
+            acao = acoes.get(tipo_chave)
+            if acao:
+                acao(arquivo)
+            else:
+                self.adicionar_log(f"Automa??o '{tipo}' ainda n?o est? implementada")
+                self.adicionar_log("Entre em contato com o suporte para mais informa??es")
+                
+        except Exception as e:
+            self.adicionar_log(f"âŒ Erro durante execuÃ§Ã£o: {str(e)}")
+            messagebox.showerror("Erro", f"Erro durante a automaÃ§Ã£o:\n{str(e)}")
+        finally:
+            self.executando = False
+            self.atualizar_progresso(0)
+            self.after(0, self.atualizar_estado_botoes)
+            
+    @contextlib.contextmanager
+    def _capturar_saida_console(self):
+        """Context manager para capturar a saÃ­da do console (prints)"""
+        old_stdout = sys.stdout
+        stdout_capture = StringIO()
+        try:
+            sys.stdout = stdout_capture
+            yield stdout_capture
+        finally:
+            sys.stdout = old_stdout
+
+    def _normalizar_chave_tipo(self, texto):
+        """Converte o tipo em uma chave padronizada (sem acentos e minúsculo)."""
+        try:
+            if not isinstance(texto, str):
+                return ""
+            normalizado = unicodedata.normalize("NFKD", texto)
+            sem_acentos = normalizado.encode("ASCII", "ignore").decode("ASCII")
+            return sem_acentos.strip().lower()
+        except Exception:
+            return ""
+
+    def _normalizar_tipo(self, texto):
+        """Normaliza o valor do tipo de automação, corrigindo acentuação quebrada."""
+        try:
+            chave = self._normalizar_chave_tipo(texto)
+            mapa = {
+                "beneficiario": "Beneficiário",
+                "procedimento": "Procedimentos",
+                "procedimentos": "Procedimentos",
+                "prestador": "Prestadores",
+                "prestadores": "Prestadores",
+                "consulta": "Consultas",
+                "consultas": "Consultas",
+                "diagnostico": "Diagnósticos",
+                "diagnosticos": "Diagnósticos",
+                "exame": "Exames",
+                "exames": "Exames",
+                "terapia": "Terapias",
+                "terapias": "Terapias",
+                "sinistralidade": "Sinistralidade",
+            }
+            for chave_mapa, valor in mapa.items():
+                if chave.startswith(chave_mapa):
+                    return valor
+            if isinstance(texto, str):
+                return texto.strip()
+            return texto
+        except Exception:
+            return texto
+
+    def _corrigir_rotulos_menu(self):
+        """Corrige rótulos e descrições do menu com acentuação correta."""
+        try:
+            frame = getattr(self, "radio_opcoes_frame", None)
+            if not frame:
+                return
+
+            titulos_corretos = {
+                "beneficiario": "Beneficiário",
+                "procedimentos": "Procedimentos",
+                "prestadores": "Prestadores",
+                "consultas": "Consultas",
+                "diagnosticos": "Diagnósticos",
+                "exames": "Exames",
+                "terapias": "Terapias",
+                "sinistralidade": "Sinistralidade",
+            }
+
+            for option_frame in frame.winfo_children():
+                for widget in option_frame.winfo_children():
+                    if isinstance(widget, ctk.CTkRadioButton):
+                        texto = widget.cget("text")
+                        if isinstance(texto, str):
+                            chave = texto.lower().strip()
+                            if chave in titulos_corretos:
+                                widget.configure(text=titulos_corretos[chave])
+                    elif isinstance(widget, ctk.CTkLabel):
+                        texto = widget.cget("text")
+                        if isinstance(texto, str) and "sinistr" in texto.lower():
+                            widget.configure(text="Estatísticas de\nsinistralidade")
+        except Exception:
+            pass
+
+    def _processar_mensagens_append(self, saida_capturada):
+        """Processa as mensagens capturadas do mÃ³dulo append e adiciona aos logs"""
+        mensagens = saida_capturada.getvalue().strip()
+        
+        if mensagens:
+            self.adicionar_log("ðŸ“‹ Mensagens do sistema de gravaÃ§Ã£o:")
+            for linha in mensagens.split('\n'):
+                linha = linha.strip()
+                if linha:
+                    # Detecta diferentes tipos de mensagens
+                    if "Dados jÃ¡ existentes" in linha or "jÃ¡ existentes" in linha:
+                        self.adicionar_log(f"ðŸ”„ {linha}")
+                        self.adicionar_log("âœ… Sistema de proteÃ§Ã£o contra duplicatas funcionando corretamente!")
+                        self.adicionar_log("ðŸ“Š Dados nÃ£o foram duplicados - integridade preservada")
+                        
+                        # Extrair detalhes das duplicatas se possÃ­vel
+                        if "contratos/competÃªncias:" in linha:
+                            detalhes = linha.split("contratos/competÃªncias:")[1].split(".")[0].strip()
+                            self.adicionar_log(f"ðŸ“ Detalhes: {detalhes}")
+                            
+                    elif "adicionados com sucesso" in linha or "sucesso" in linha:
+                        self.adicionar_log(f"âœ… {linha}")
+                    elif "Planilha criada" in linha or "criada" in linha:
+                        self.adicionar_log(f"ðŸ“„ {linha}")
+                    elif linha.startswith("âš ï¸") or linha.startswith("âœ…"):
+                        # Mensagens que jÃ¡ tÃªm emoji
+                        self.adicionar_log(linha)
+                    else:
+                        # Outras mensagens do sistema
+                        self.adicionar_log(f"â„¹ï¸ {linha}")
+        else:
+            self.adicionar_log("ðŸ“‹ Processamento silencioso - sem mensagens adicionais")
+
+    def _executar_prestadores(self, arquivo):
+            """Executa a automaÃ§Ã£o especÃ­fica de Prestadores"""
+            try:
+                if not MODULOS_DISPONIVEL:
+                    raise Exception("MÃ³dulos de prestadores nÃ£o estÃ£o disponÃ­veis")
+
+                # 1. Lendo arquivo Excel
+                self.adicionar_log("ðŸ“– Lendo arquivo Excel...")
+                self.atualizar_progresso(0.2)
+
+                # Chama a funÃ§Ã£o real de leitura
+                dados = prestadores_read(arquivo)
+
+                if not dados:
+                    raise Exception("Nenhum dado foi encontrado no arquivo")
+
+                self.adicionar_log(f"âœ… Dados lidos com sucesso! {len(dados)} registros encontrados")
+                self.atualizar_progresso(0.5)
+
+                # 2. Processando e formatando dados
+                self.adicionar_log("ðŸ”„ Processando e formatando dados...")
+                self.atualizar_progresso(0.7)
+
+                # 3. Salvando na planilha de destino
+                self.adicionar_log("ðŸ’¾ Salvando resultados na planilha consolidada...")
+                self.adicionar_log("ðŸ” Verificando duplicatas baseado em contrato + competÃªncia...")
+
+                # Garante que a pasta databases existe
+                caminho_destino = 'databases/prestadores.xlsx'
+                os.makedirs(os.path.dirname(caminho_destino), exist_ok=True)
+
+                # Captura a saÃ­da do console durante o append
+                with self._capturar_saida_console() as saida:
+                    prestadores_append(caminho_destino, dados)
+                
+                # Processa as mensagens capturadas
+                saida_texto = saida.getvalue().strip()
+                
+                # DEBUG: Mostra o que foi capturado
+                self.adicionar_log(f"ðŸ”§ DEBUG: Texto capturado do console: '{saida_texto}'")
+                
+                # Verifica especificamente por duplicatas
+                if "jÃ¡ existentes" in saida_texto or "Dados jÃ¡ existentes" in saida_texto:
+                    self.adicionar_log("ðŸ”„ DUPLICATAS DETECTADAS!")
+                    self._processar_mensagens_append(saida)
+                    self.adicionar_log("ðŸ›¡ï¸ PROTEÃ‡ÃƒO ATIVA: Dados duplicados foram rejeitados automaticamente")
+                    
+                    # Popup especÃ­fico para duplicatas
+                    self.after(0, lambda: messagebox.showwarning(
+                        "Duplicatas Detectadas", 
+                        f"âš ï¸ DADOS JÃ EXISTENTES DETECTADOS!\n\n"
+                        f"O sistema identificou que os dados do arquivo:\n"
+                        f"'{os.path.basename(arquivo)}'\n\n"
+                        f"JÃ¡ existem na base de dados para o mesmo contrato e competÃªncia.\n\n"
+                        f"âœ… PROTEÃ‡ÃƒO ATIVA: Nenhum dado foi duplicado!\n"
+                        f"ðŸ“Š Sistema funcionando corretamente."
+                    ))
+                else:
+                    # Processa mensagens normais
+                    self._processar_mensagens_append(saida)
+                    
+                    # Popup de sucesso normal
+                    self.after(0, lambda: messagebox.showinfo(
+                        "Sucesso", 
+                        f"AutomaÃ§Ã£o de prestadores concluÃ­da com sucesso!\n\n"
+                        f"â€¢ {len(dados)} registros processados\n"
+                        f"â€¢ Resultados salvos em: databases/prestadores.xlsx\n"
+                        f"â€¢ Arquivo de origem: {os.path.basename(arquivo)}"
+                    ))
+
+                self.atualizar_progresso(1.0)
+                self.adicionar_log("âœ… AutomaÃ§Ã£o concluÃ­da com sucesso!")
+                self.adicionar_log(f"ðŸ“‚ Resultados salvos em: {os.path.abspath(caminho_destino)}")
+                self.adicionar_log(f"ðŸ“Š Total de {len(dados)} registros processados")
+
+            except Exception as e:
+                raise Exception(f"Erro na automaÃ§Ã£o de prestadores: {str(e)}")
+                    
+    def _executar_procedimentos(self, arquivo):
+            """Executa a automaÃ§Ã£o especÃ­fica de Procedimentos"""
+            try:
+                if not MODULOS_DISPONIVEL:
+                    raise Exception("MÃ³dulos de procedimentos nÃ£o estÃ£o disponÃ­veis")
+
+                # 1. Lendo arquivo Excel
+                self.adicionar_log("ðŸ“– Lendo arquivo Excel...")
+                self.atualizar_progresso(0.2)
+
+                # Chama a funÃ§Ã£o real de leitura
+                dados = procedimentos_read(arquivo)
+
+                if not dados:
+                    raise Exception("Nenhum dado foi encontrado no arquivo")
+
+                self.adicionar_log(f"âœ… Dados lidos com sucesso! {len(dados)} registros encontrados")
+                self.atualizar_progresso(0.5)
+
+                # 2. Processando e formatando dados
+                self.adicionar_log("ðŸ”„ Processando e formatando dados...")
+                self.atualizar_progresso(0.7)
+
+                # 3. Salvando na planilha de destino
+                self.adicionar_log("ðŸ’¾ Salvando resultados na planilha consolidada...")
+                self.adicionar_log("ðŸ” Verificando duplicatas baseado em contrato + competÃªncia...")
+
+                # Garante que a pasta databases existe
+                caminho_destino = 'databases/procedimentos.xlsx'
+                os.makedirs(os.path.dirname(caminho_destino), exist_ok=True)
+
+                # Captura a saÃ­da do console durante o append
+                with self._capturar_saida_console() as saida:
+                    procedimentos_append(caminho_destino, dados)
+                
+                # Processa as mensagens capturadas
+                saida_texto = saida.getvalue().strip()
+                
+                # DEBUG: Mostra o que foi capturado
+                self.adicionar_log(f"ðŸ”§ DEBUG: Texto capturado do console: '{saida_texto}'")
+                
+                # Verifica especificamente por duplicatas
+                if "jÃ¡ existentes" in saida_texto or "Dados jÃ¡ existentes" in saida_texto:
+                    self.adicionar_log("ðŸ”„ DUPLICATAS DETECTADAS!")
+                    self._processar_mensagens_append(saida)
+                    self.adicionar_log("ðŸ›¡ï¸ PROTEÃ‡ÃƒO ATIVA: Dados duplicados foram rejeitados automaticamente")
+                    
+                    # Popup especÃ­fico para duplicatas
+                    self.after(0, lambda: messagebox.showwarning(
+                        "Duplicatas Detectadas", 
+                        f"âš ï¸ DADOS JÃ EXISTENTES DETECTADOS!\n\n"
+                        f"O sistema identificou que os dados do arquivo:\n"
+                        f"'{os.path.basename(arquivo)}'\n\n"
+                        f"JÃ¡ existem na base de dados para o mesmo contrato e competÃªncia.\n\n"
+                        f"âœ… PROTEÃ‡ÃƒO ATIVA: Nenhum dado foi duplicado!\n"
+                        f"ðŸ“Š Sistema funcionando corretamente."
+                    ))
+                else:
+                    # Processa mensagens normais
+                    self._processar_mensagens_append(saida)
+                    
+                    # Popup de sucesso normal
+                    self.after(0, lambda: messagebox.showinfo(
+                        "Sucesso", 
+                        f"AutomaÃ§Ã£o de procedimentos concluÃ­da com sucesso!\n\n"
+                        f"â€¢ {len(dados)} registros processados\n"
+                        f"â€¢ Resultados salvos em: databases/procedimentos.xlsx\n"
+                        f"â€¢ Arquivo de origem: {os.path.basename(arquivo)}"
+                    ))
+
+                self.atualizar_progresso(1.0)
+                self.adicionar_log("âœ… AutomaÃ§Ã£o concluÃ­da com sucesso!")
+                self.adicionar_log(f"ðŸ“‚ Resultados salvos em: {os.path.abspath(caminho_destino)}")
+                self.adicionar_log(f"ðŸ“Š Total de {len(dados)} registros processados")
+
+            except Exception as e:
+                raise Exception(f"Erro na automaÃ§Ã£o de procedimentos: {str(e)}")
+        
+    def _executar_beneficiario(self, arquivo):
+        """Executa a automaÃ§Ã£o especÃ­fica de beneficiÃ¡rios"""
+        try:
+            if not MODULOS_DISPONIVEL:
+                raise Exception("MÃ³dulos de beneficiÃ¡rios nÃ£o estÃ£o disponÃ­veis")
+            
+            # 1. Lendo arquivo Excel
+            self.adicionar_log("ðŸ“– Lendo arquivo Excel...")
+            self.atualizar_progresso(0.2)
+            
+            # Chama a funÃ§Ã£o real de leitura
+            dados = beneficiarios_read(arquivo)
+            
+            if not dados:
+                raise Exception("Nenhum dado foi encontrado no arquivo")
+                
+            self.adicionar_log(f"âœ… Dados lidos com sucesso! {len(dados)} registros encontrados")
+            self.atualizar_progresso(0.5)
+            
+            # 2. Processando e formatando dados
+            self.adicionar_log("ðŸ”„ Processando e formatando dados...")
+            self.atualizar_progresso(0.7)
+            
+            # 3. Salvando na planilha de destino
+            self.adicionar_log("ðŸ’¾ Salvando resultados na planilha consolidada...")
+            self.adicionar_log("ðŸ” Verificando duplicatas baseado em contrato + competÃªncia...")
+            
+            # Garante que a pasta databases existe
+            caminho_destino = 'databases/despesas.xlsx'
+            os.makedirs(os.path.dirname(caminho_destino), exist_ok=True)
+            
+            # Captura a saÃ­da do console durante o append
+            with self._capturar_saida_console() as saida:
+                resultado_append = beneficarios_append(caminho_destino, dados)
+            
+            # Processa as mensagens capturadas
+            saida_texto = saida.getvalue().strip()
+            
+            # DEBUG: Mostra o que foi capturado
+            self.adicionar_log(f"ðŸ”§ DEBUG: Texto capturado do console: '{saida_texto}'")
+            
+            # Verifica especificamente por duplicatas
+            if "jÃ¡ existentes" in saida_texto or "Dados jÃ¡ existentes" in saida_texto:
+                self.adicionar_log("ðŸ”„ DUPLICATAS DETECTADAS!")
+                self._processar_mensagens_append(saida)
+                self.adicionar_log("ï¿½ï¸ PROTEÃ‡ÃƒO ATIVA: Dados duplicados foram rejeitados automaticamente")
+                
+                # Popup especÃ­fico para duplicatas
+                self.after(0, lambda: messagebox.showwarning(
+                    "Duplicatas Detectadas", 
+                    f"âš ï¸ DADOS JÃ EXISTENTES DETECTADOS!\n\n"
+                    f"O sistema identificou que os dados do arquivo:\n"
+                    f"'{os.path.basename(arquivo)}'\n\n"
+                    f"JÃ¡ existem na base de dados para o mesmo contrato e competÃªncia.\n\n"
+                    f"âœ… PROTEÃ‡ÃƒO ATIVA: Nenhum dado foi duplicado!\n"
+                    f"ðŸ“Š Sistema funcionando corretamente."
+                ))
+            else:
+                # Processa mensagens normais
+                self._processar_mensagens_append(saida)
+                
+                # Popup de sucesso normal
+                self.after(0, lambda: messagebox.showinfo(
+                    "Sucesso", 
+                    f"AutomaÃ§Ã£o de beneficiÃ¡rios concluÃ­da com sucesso!\n\n"
+                    f"â€¢ {len(dados)} registros processados\n"
+                    f"â€¢ Resultados salvos em: databases/despesas.xlsx\n"
+                    f"â€¢ Arquivo de origem: {os.path.basename(arquivo)}"
+                ))
+            
+            self.atualizar_progresso(1.0)
+            self.adicionar_log("âœ… AutomaÃ§Ã£o concluÃ­da com sucesso!")
+            self.adicionar_log(f"ðŸ“‚ Resultados salvos em: {os.path.abspath(caminho_destino)}")
+            self.adicionar_log(f"ðŸ“Š Total de {len(dados)} registros processados")
+            
+        except Exception as e:
+            raise Exception(f"Erro na automaÃ§Ã£o de beneficiÃ¡rios: {str(e)}")
+            
+    def _executar_consultas(self, arquivo):
+        """Executa a automaÃ§Ã£o especÃ­fica de Consultas"""
+        try:
+            if not MODULOS_DISPONIVEL:
+                raise Exception("MÃ³dulos de consultas nÃ£o estÃ£o disponÃ­veis")
+
+            # 1. Leitura
+            self.adicionar_log("Lendo arquivo Excel de Consultas...")
+            self.atualizar_progresso(0.2)
+            dados = consultas_read(arquivo)
+            if not dados:
+                raise Exception("Nenhum dado de consultas encontrado no arquivo")
+            self.adicionar_log(f"Dados lidos com sucesso: {len(dados)} registros")
+            self.atualizar_progresso(0.5)
+
+            # 2. Salvando
+            self.adicionar_log("Salvando resultados em databases/consultas.xlsx ...")
+            caminho_destino = 'databases/consultas.xlsx'
+            os.makedirs(os.path.dirname(caminho_destino), exist_ok=True)
+            with self._capturar_saida_console() as saida:
+                consultas_append(caminho_destino, dados)
+
+            saida_texto = saida.getvalue().strip()
+            if "jÃ¡ existentes" in saida_texto or "Dados jÃ¡ existentes" in saida_texto:
+                self.adicionar_log("Duplicatas detectadas: dados nÃ£o inseridos.")
+                self._processar_mensagens_append(saida)
+                self.after(0, lambda: messagebox.showwarning(
+                    "Duplicatas Detectadas",
+                    "Dados jÃ¡ existentes para o mesmo contrato/competÃªncia. Nada foi inserido."
+                ))
+            else:
+                self._processar_mensagens_append(saida)
+                self.after(0, lambda: messagebox.showinfo(
+                    "Sucesso",
+                    f"AutomaÃ§Ã£o de Consultas concluÃ­da!\n\n- {len(dados)} registros processados\n- Resultado: databases/consultas.xlsx"
+                ))
+
+            self.atualizar_progresso(1.0)
+            self.adicionar_log("AutomaÃ§Ã£o de Consultas concluÃ­da com sucesso.")
+            self.adicionar_log(f"Arquivo salvo: {os.path.abspath(caminho_destino)}")
+        except Exception as e:
+            raise Exception(f"Erro na automaÃ§Ã£o de consultas: {str(e)}")
+
+    def _executar_diagnosticos(self, arquivo):
+        """Executa a automaï¿½ï¿½Çœo especï¿½ï¿½fica de Diagnï¿½ï¿½sticos"""
+        try:
+            if not MODULOS_DISPONIVEL:
+                raise Exception("Mï¿½ï¿½dulos de diagnï¿½ï¿½sticos nÇœo estÇœo disponï¿½ï¿½veis")
+
+            # 1. Leitura
+            self.adicionar_log("Lendo arquivo Excel de Diagnï¿½ï¿½sticos...")
+            self.atualizar_progresso(0.2)
+            # Captura logs de debug do leitor (mesmo em caso de erro)
+            saida_leitura = None
+            try:
+                with self._capturar_saida_console() as saida_leitura:
+                    dados = diagnosticos_read(arquivo)
+            except Exception as e_leitura:
+                try:
+                    texto_leitura = saida_leitura.getvalue().strip() if saida_leitura else ''
+                    if texto_leitura:
+                        for linha in texto_leitura.split('\n'):
+                            self.adicionar_log(f"[Diagnosticos] {linha.strip()}")
+                finally:
+                    raise e_leitura
+            else:
+                try:
+                    texto_leitura = saida_leitura.getvalue().strip() if saida_leitura else ''
+                    if texto_leitura:
+                        for linha in texto_leitura.split('\n'):
+                            self.adicionar_log(f"[Diagnosticos] {linha.strip()}")
+                except Exception:
+                    pass
+            if not dados:
+                raise Exception("Nenhum dado de diagnï¿½ï¿½sticos encontrado no arquivo")
+            self.adicionar_log(f"Dados lidos com sucesso: {len(dados)} registros")
+            self.atualizar_progresso(0.5)
+
+            # 2. Salvando
+            self.adicionar_log("Salvando resultados em databases/diagnosticos.xlsx ...")
+            caminho_destino = 'databases/diagnosticos.xlsx'
+            os.makedirs(os.path.dirname(caminho_destino), exist_ok=True)
+            with self._capturar_saida_console() as saida:
+                diagnosticos_append(caminho_destino, dados)
+
+            saida_texto = saida.getvalue().strip()
+            if "jÇ­ existentes" in saida_texto or "Dados jÇ­ existentes" in saida_texto:
+                self.adicionar_log("Duplicatas detectadas: dados nÇœo inseridos.")
+                self._processar_mensagens_append(saida)
+                self.after(0, lambda: messagebox.showwarning(
+                    "Duplicatas Detectadas",
+                    "Dados jÇ­ existentes para o mesmo contrato/competÇ¦ncia. Nada foi inserido."
+                ))
+            else:
+                self._processar_mensagens_append(saida)
+                self.after(0, lambda: messagebox.showinfo(
+                    "Sucesso",
+                    f"Automaï¿½ï¿½Çœo de Diagnï¿½ï¿½sticos concluï¿½ï¿½da!\n\n- {len(dados)} registros processados\n- Resultado: databases/diagnosticos.xlsx"
+                ))
+
+            self.atualizar_progresso(1.0)
+            self.adicionar_log("Automaï¿½ï¿½Çœo de Diagnï¿½ï¿½sticos concluï¿½ï¿½da com sucesso.")
+            self.adicionar_log(f"Arquivo salvo: {os.path.abspath(caminho_destino)}")
+        except Exception as e:
+            raise Exception(f"Erro na automaï¿½ï¿½Çœo de diagnï¿½ï¿½sticos: {str(e)}")
+
+    def _executar_sinistralidade(self, arquivo):
+        """Executa a automacao especifica de Sinistralidade"""
+        try:
+            if not MODULOS_DISPONIVEL:
+                raise Exception("Modulos de sinistralidade nao estao disponiveis")
+
+            self.adicionar_log("Lendo arquivo Excel de Sinistralidade...")
+            self.atualizar_progresso(0.2)
+            saida_leitura = None
+            try:
+                with self._capturar_saida_console() as saida_leitura:
+                    dados = sinistralidade_read(arquivo)
+            except Exception as e_leitura:
+                try:
+                    texto_leitura = saida_leitura.getvalue().strip() if saida_leitura else ""
+                    if texto_leitura:
+                        for linha in texto_leitura.split("\n"):
+                            linha = linha.strip()
+                            if linha:
+                                self.adicionar_log(f"[Sinistralidade] {linha}")
+                finally:
+                    raise e_leitura
+            else:
+                try:
+                    texto_leitura = saida_leitura.getvalue().strip() if saida_leitura else ""
+                    if texto_leitura:
+                        for linha in texto_leitura.split("\n"):
+                            linha = linha.strip()
+                            if linha:
+                                self.adicionar_log(f"[Sinistralidade] {linha}")
+                except Exception:
+                    pass
+
+            if not dados:
+                raise Exception("Nenhum dado de sinistralidade encontrado no arquivo")
+            self.adicionar_log(f"Dados lidos com sucesso: {len(dados)} registros")
+            self.atualizar_progresso(0.5)
+
+            self.adicionar_log("Salvando resultados em databases/sinistralidade.xlsx ...")
+            caminho_destino = "databases/sinistralidade.xlsx"
+            os.makedirs(os.path.dirname(caminho_destino), exist_ok=True)
+            with self._capturar_saida_console() as saida:
+                sinistralidade_append(caminho_destino, dados)
+
+            saida_texto = saida.getvalue().strip()
+            saida_texto_norm = saida_texto.lower()
+            if "ja existentes" in saida_texto_norm or "dados ja existentes" in saida_texto_norm:
+                self.adicionar_log("Duplicatas detectadas: dados nao inseridos.")
+                self._processar_mensagens_append(saida)
+                self.after(0, lambda: messagebox.showwarning(
+                    "Duplicatas Detectadas",
+                    "Dados ja existentes para o mesmo contrato/competencia. Nada foi inserido."
+                ))
+            else:
+                self._processar_mensagens_append(saida)
+                self.after(0, lambda: messagebox.showinfo(
+                    "Sucesso",
+                    f"Automacao de Sinistralidade concluida!\n\n- {len(dados)} registros processados\n- Resultado: databases/sinistralidade.xlsx"
+                ))
+
+            self.atualizar_progresso(1.0)
+            self.adicionar_log("Automacao de Sinistralidade concluida com sucesso.")
+            self.adicionar_log(f"Arquivo salvo: {os.path.abspath(caminho_destino)}")
+        except Exception as e:
+            raise Exception(f"Erro na automacao de sinistralidade: {str(e)}")
+
+    def _executar_terapias(self, arquivo):
+        """Executa a automaÃ§Ã£o especÃ­fica de Terapias"""
+        try:
+            if not MODULOS_DISPONIVEL:
+                raise Exception("MÃ³dulos de terapias nÃ£o estÃ£o disponÃ­veis")
+
+            # 1. Leitura
+            self.adicionar_log("Lendo arquivo Excel de Terapias...")
+            self.atualizar_progresso(0.2)
+            dados = terapias_read(arquivo)
+            if not dados:
+                raise Exception("Nenhum dado de terapias encontrado no arquivo")
+            self.adicionar_log(f"Dados lidos com sucesso: {len(dados)} registros")
+            self.atualizar_progresso(0.5)
+
+            # 2. Salvando
+            self.adicionar_log("Salvando resultados em databases/terapias.xlsx ...")
+            caminho_destino = 'databases/terapias.xlsx'
+            os.makedirs(os.path.dirname(caminho_destino), exist_ok=True)
+            with self._capturar_saida_console() as saida:
+                terapias_append(caminho_destino, dados)
+
+            saida_texto = saida.getvalue().strip()
+            if "jÃ¡ existentes" in saida_texto or "Dados jÃ¡ existentes" in saida_texto or "jÇ­ existentes" in saida_texto:
+                self.adicionar_log("Duplicatas detectadas: dados nÃ£o inseridos.")
+                self._processar_mensagens_append(saida)
+                self.after(0, lambda: messagebox.showwarning(
+                    "Duplicatas Detectadas",
+                    "Dados jÃ¡ existentes para o mesmo contrato/competÃªncia. Nada foi inserido."
+                ))
+            else:
+                self._processar_mensagens_append(saida)
+                self.after(0, lambda: messagebox.showinfo(
+                    "Sucesso",
+                    f"AutomaÃ§Ã£o de Terapias concluÃ­da!\n\n- {len(dados)} registros processados\n- Resultado: databases/terapias.xlsx"
+                ))
+
+            self.atualizar_progresso(1.0)
+            self.adicionar_log("AutomaÃ§Ã£o de Terapias concluÃ­da com sucesso.")
+            self.adicionar_log(f"Arquivo salvo: {os.path.abspath(caminho_destino)}")
+        except Exception as e:
+            raise Exception(f"Erro na automaÃ§Ã£o de terapias: {str(e)}")
+
+    def _executar_exames(self, arquivo):
+        """Executa a automaÃ§Ã£o especÃ­fica de Exames"""
+        try:
+            if not MODULOS_DISPONIVEL:
+                raise Exception("MÃ³dulos de exames nÃ£o estÃ£o disponÃ­veis")
+
+            self.adicionar_log("Lendo arquivo Excel de Exames...")
+            self.atualizar_progresso(0.2)
+            dados = exames_read(arquivo)
+            if not dados:
+                raise Exception("Nenhum dado de exames encontrado no arquivo")
+            self.adicionar_log(f"Dados lidos com sucesso: {len(dados)} registros")
+            self.atualizar_progresso(0.5)
+
+            self.adicionar_log("Salvando resultados em databases/exames.xlsx ...")
+            caminho_destino = 'databases/exames.xlsx'
+            os.makedirs(os.path.dirname(caminho_destino), exist_ok=True)
+            with self._capturar_saida_console() as saida:
+                exames_append(caminho_destino, dados)
+
+            saida_texto = saida.getvalue().strip()
+            if "jÃ¡ existentes" in saida_texto or "Dados jÃ¡ existentes" in saida_texto or "Atenï¿½ï¿½" in saida_texto:
+                self.adicionar_log("Duplicatas detectadas: dados nÃ£o inseridos.")
+                self._processar_mensagens_append(saida)
+                self.after(0, lambda: messagebox.showwarning(
+                    "Duplicatas Detectadas",
+                    "Dados jÃ¡ existentes para o mesmo contrato/competÃªncia. Nada foi inserido."
+                ))
+            else:
+                self._processar_mensagens_append(saida)
+                self.after(0, lambda: messagebox.showinfo(
+                    "Sucesso",
+                    f"AutomaÃ§Ã£o de Exames concluÃ­da!\n\n- {len(dados)} registros processados\n- Resultado: databases/exames.xlsx"
+                ))
+
+            self.atualizar_progresso(1.0)
+            self.adicionar_log("AutomaÃ§Ã£o de Exames concluÃ­da com sucesso.")
+            self.adicionar_log(f"Arquivo salvo: {os.path.abspath(caminho_destino)}")
+        except Exception as e:
+            raise Exception(f"Erro na automaÃ§Ã£o de exames: {str(e)}")
+
+    def validar_inputs(self):
+        """Valida se todos os inputs necessarios estao preenchidos"""
+        tipo_chave = self._normalizar_chave_tipo(self.automacao_var.get())
+
+        if not self.arquivo_selecionado:
+            self.adicionar_log("Erro: Nenhum arquivo selecionado!")
+            messagebox.showwarning(
+                "Atencao",
+                "Por favor, selecione um arquivo Excel primeiro.",
+            )
+            return False
+
+        if not os.path.exists(self.arquivo_selecionado):
+            self.adicionar_log("Erro: Arquivo nao encontrado!")
+            messagebox.showerror(
+                "Erro",
+                "O arquivo selecionado nao foi encontrado.",
+            )
+            return False
+
+        if tipo_chave.startswith("beneficiario") and not MODULOS_DISPONIVEL:
+            self.adicionar_log("Erro: Modulos de beneficiarios nao disponiveis!")
+            messagebox.showerror(
+                "Erro",
+                "\n".join(
+                    [
+                        "Os modulos de automacao de beneficiarios nao estao disponiveis.",
+                        "",
+                        "Verifique se existem os arquivos:",
+                        "- beneficiarios/ler_excel.py",
+                        "- beneficiarios/append_excel.py",
+                    ]
+                ),
+            )
+            return False
+
+        if tipo_chave.startswith("prestador") and not MODULOS_DISPONIVEL:
+            self.adicionar_log("Erro: Modulos de prestadores nao disponiveis!")
+            messagebox.showerror(
+                "Erro",
+                "\n".join(
+                    [
+                        "Os modulos de automacao de prestadores nao estao disponiveis.",
+                        "",
+                        "Verifique se existem os arquivos:",
+                        "- prestadores/ler_excel.py",
+                        "- prestadores/append_excel.py",
+                    ]
+                ),
+            )
+            return False
+
+        if tipo_chave.startswith("procedimento") and not MODULOS_DISPONIVEL:
+            self.adicionar_log("Erro: Modulos de procedimentos nao disponiveis!")
+            messagebox.showerror(
+                "Erro",
+                "\n".join(
+                    [
+                        "Os modulos de automacao de procedimentos nao estao disponiveis.",
+                        "",
+                        "Verifique se existem os arquivos:",
+                        "- procedimentos/ler_excel.py",
+                        "- procedimentos/append_excel.py",
+                    ]
+                ),
+            )
+            return False
+
+        if tipo_chave.startswith("sinistralidade") and not MODULOS_DISPONIVEL:
+            self.adicionar_log("Erro: Modulos de sinistralidade nao disponiveis!")
+            messagebox.showerror(
+                "Erro",
+                "\n".join(
+                    [
+                        "Os modulos de automacao de sinistralidade nao estao disponiveis.",
+                        "",
+                        "Verifique se existem os arquivos:",
+                        "- sinistralidade/ler_excel.py",
+                        "- sinistralidade/append_excel.py",
+                    ]
+                ),
+            )
+            return False
+
+        return True
+
+    def atualizar_estado_botoes(self):
+        """Atualiza o estado dos botoes baseado no estado atual"""
+        if self.executando:
+            self.executar_button.configure(
+                state="disabled",
+                text="PROCESSANDO...",
+                fg_color=["#6c757d", "#495057"]
+            )
+            self.select_button.configure(state="disabled")
+            self.limpar_button.configure(state="disabled")
+            if self.pasta_button is not None:
+                self.pasta_button.configure(state="disabled")
+            if self.mesclar_button is not None:
+                self.mesclar_button.configure(state="disabled")
+        else:
+            modo = self.modo_input.get() if hasattr(self, "modo_input") else "arquivo"
+            self.limpar_button.configure(state="normal")
+
+            if modo == "arquivo":
+                estado_exec = "normal" if self.arquivo_selecionado else "disabled"
+                self.executar_button.configure(
+                    state=estado_exec,
+                    text="EXECUTAR AUTOMAÇÃO",
+                    fg_color=["#007bff", "#0056b3"]
+                )
+                self.select_button.configure(state="normal")
+                if self.pasta_button is not None:
+                    self.pasta_button.configure(state="disabled")
+                if self.mesclar_button is not None:
+                    self.mesclar_button.configure(state="disabled")
+            else:
+                self.executar_button.configure(
+                    state="disabled",
+                    text="EXECUTAR AUTOMAÇÃO",
+                    fg_color=["#007bff", "#0056b3"]
+                )
+                self.select_button.configure(state="disabled")
+                if self.pasta_button is not None:
+                    self.pasta_button.configure(state="normal")
+                if self.mesclar_button is not None:
+                    estado_mescla = "normal" if self.pasta_mescla else "disabled"
+                    self.mesclar_button.configure(state=estado_mescla)
+
+    def atualizar_progresso(self, valor):
+        """Atualiza a barra de progresso"""
+        self.after(0, lambda: self.progress_bar.set(valor))
+        
+    def limpar_tudo(self):
+        """Limpa todas as sele??es e logs"""
+        self.arquivo_selecionado = None
+        self.pasta_mescla = None
+        self.modo_input.set("arquivo")
+        if hasattr(self, "radio_arquivo"):
+            self.radio_arquivo.select()
+        self._atualizar_placeholder_entrada(limpar=True)
+        self.automacao_var.set("Benefici?rio")
+
+        self.log_box.delete(1.0, "end")
+        self.progress_bar.set(0)
+
+        self.adicionar_log("?? Sistema limpo - Pronto para nova automa??o")
+        self.atualizar_estado_botoes()
+
+    def adicionar_log(self, mensagem):
+        """Adiciona mensagem ao log com timestamp"""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        mensagem_formatada = f"[{timestamp}] {mensagem}"
+        
+        self.log_box.insert("end", mensagem_formatada + "\n")
+        self.log_box.see("end")
+
+if __name__ == "__main__":
+    app = AutomacaoBradescoApp()
+    app.mainloop()
