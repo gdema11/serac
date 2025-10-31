@@ -44,6 +44,8 @@ class AutomacaoBradescoApp(ctk.CTk):
         
         # Variáveis de controle
         self.arquivo_selecionado = None
+        self.pasta_selecionada = None
+        self.modo_selecao_var = ctk.StringVar(value="arquivo")
         self.executando = False
         
         # Configurar grid principal
@@ -134,6 +136,7 @@ class AutomacaoBradescoApp(ctk.CTk):
         
         # Vari?vel para radio buttons
         self.automacao_var = ctk.StringVar(value="Benefici?rio")
+        self.automacao_padrao = self.automacao_var.get()
 
         # Op??es de automa??o com descri??es
         opcoes = [
@@ -178,56 +181,60 @@ class AutomacaoBradescoApp(ctk.CTk):
             desc_label.pack(pady=(0, 12))
 
     def criar_secao_arquivo(self):
-        """Seção de seleção de arquivo"""
+        """Secao de selecao de arquivo ou pasta"""
         secao_frame = ctk.CTkFrame(self.main_container, corner_radius=0, fg_color=["#f8f9fa", "#2b2b2b"])
         secao_frame.grid(row=1, column=0, sticky="ew", pady=15, padx=15)
         secao_frame.grid_columnconfigure(0, weight=1)
-        
-        # Título
+
         titulo_label = ctk.CTkLabel(
             secao_frame,
-            text="2️⃣ SELECIONE O ARQUIVO EXCEL",
+            text="PASSO 2: SELECIONE A FONTE DOS DADOS",
             font=ctk.CTkFont(size=16, weight="bold"),
             text_color=["#1f6aa5", "#4fc3f7"]
         )
         titulo_label.grid(row=0, column=0, sticky="w", padx=20, pady=(20, 10))
-        
-        # Container do arquivo
+
         arquivo_container = ctk.CTkFrame(secao_frame, fg_color="transparent")
         arquivo_container.grid(row=1, column=0, sticky="ew", padx=20, pady=(0, 20))
         arquivo_container.grid_columnconfigure(0, weight=1)
-        
-        # Entry para mostrar arquivo
+
         self.arquivo_entry = ctk.CTkEntry(
             arquivo_container,
             height=40,
-            placeholder_text="📄 Nenhum arquivo selecionado...",
+            placeholder_text="Nenhum caminho selecionado...",
             font=ctk.CTkFont(size=12),
             state="readonly"
         )
         self.arquivo_entry.grid(row=0, column=0, sticky="ew", pady=(0, 10))
-        
-        # Botão de seleção
+
+        self.modo_selecao_menu = ctk.CTkOptionMenu(
+            arquivo_container,
+            values=["Selecionar por arquivo", "Selecionar por pasta"],
+            command=self.on_modo_selecao_changed
+        )
+        self.modo_selecao_menu.grid(row=1, column=0, sticky="w", pady=(0, 10))
+        self.modo_selecao_menu.set("Selecionar por arquivo")
+
         self.select_button = ctk.CTkButton(
             arquivo_container,
-            text="📁 SELECIONAR ARQUIVO EXCEL",
+            text="Selecionar arquivo Excel",
             height=40,
             font=ctk.CTkFont(size=12, weight="bold"),
-            command=self.selecionar_arquivo,
+            command=self.selecionar_caminho,
             fg_color=["#28a745", "#198754"],
             hover_color=["#218838", "#157347"]
         )
-        self.select_button.grid(row=1, column=0, pady=(0, 10))
-        
-        # Info do arquivo
+        self.select_button.grid(row=2, column=0, pady=(0, 10))
+
         self.arquivo_info = ctk.CTkLabel(
             arquivo_container,
             text="Formatos suportados: .xls, .xlsx",
             font=ctk.CTkFont(size=10),
             text_color=["#6c757d", "#a0a0a0"]
         )
-        self.arquivo_info.grid(row=2, column=0)
-        
+        self.arquivo_info.grid(row=3, column=0, sticky="w")
+
+        self._aplicar_modo_selecao(self.modo_selecao_var.get())
     def criar_secao_execucao(self):
         """Seção de execução da automação"""
         secao_frame = ctk.CTkFrame(self.main_container, corner_radius=0, fg_color=["#f8f9fa", "#2b2b2b"])
@@ -380,38 +387,113 @@ class AutomacaoBradescoApp(ctk.CTk):
 
         self.atualizar_estado_botoes()
 
-    def selecionar_arquivo(self):
-        """Abre dialog para seleção de arquivo Excel"""
-        tipos_arquivo = [
-            ("Arquivos Excel", "*.xls *.xlsx"),
-            ("Todos os arquivos", "*.*")
-        ]
-        
-        arquivo = filedialog.askopenfilename(
-            title="Selecione o arquivo Excel para processamento",
-            filetypes=tipos_arquivo,
-            initialdir=os.path.expanduser("~")
-        )
-        
-        if arquivo:
-            self.arquivo_selecionado = arquivo
-            nome_arquivo = os.path.basename(arquivo)
-            
-            # Atualiza a interface
+    def selecionar_caminho(self):
+        """Abre dialog para selecao de arquivo ou pasta"""
+        modo = self.modo_selecao_var.get()
+        if modo == "pasta":
+            pasta = filedialog.askdirectory(
+                title="Selecione a pasta com arquivos Excel",
+                initialdir=os.path.expanduser("~")
+            )
+            if not pasta:
+                return
+
+            self.pasta_selecionada = pasta
+            self.arquivo_selecionado = None
+            arquivos = self._listar_arquivos_excel(pasta)
+            nome_exibicao = os.path.basename(os.path.normpath(pasta)) or pasta
+
             self.arquivo_entry.configure(state="normal")
             self.arquivo_entry.delete(0, "end")
-            self.arquivo_entry.insert(0, f"📄 {nome_arquivo}")
+            self.arquivo_entry.insert(0, f"Pasta: {nome_exibicao} ({len(arquivos)} arquivo(s))")
             self.arquivo_entry.configure(state="readonly")
-            
-            # Informações do arquivo
-            tamanho = os.path.getsize(arquivo)
-            tamanho_mb = tamanho / (1024 * 1024)
-            
-            self.adicionar_log(f"📁 Arquivo selecionado: {nome_arquivo}")
-            self.adicionar_log(f"📊 Tamanho: {tamanho_mb:.2f} MB | Caminho: {arquivo}")
-            
-            self.atualizar_estado_botoes()
 
+            self.adicionar_log(f"Pasta selecionada: {pasta}")
+            if arquivos:
+                self.adicionar_log(f"Foram encontrados {len(arquivos)} arquivo(s) Excel na pasta.")
+            else:
+                self.adicionar_log("Nenhum arquivo Excel (.xls/.xlsx) encontrado na pasta selecionada.")
+        else:
+            tipos_arquivo = [
+                ("Arquivos Excel", "*.xls *.xlsx"),
+                ("Todos os arquivos", "*.*")
+            ]
+            arquivo = filedialog.askopenfilename(
+                title="Selecione o arquivo Excel para processamento",
+                filetypes=tipos_arquivo,
+                initialdir=os.path.expanduser("~")
+            )
+            if not arquivo:
+                return
+
+            self.arquivo_selecionado = arquivo
+            self.pasta_selecionada = None
+            nome_arquivo = os.path.basename(arquivo)
+
+            self.arquivo_entry.configure(state="normal")
+            self.arquivo_entry.delete(0, "end")
+            self.arquivo_entry.insert(0, f"Arquivo: {nome_arquivo}")
+            self.arquivo_entry.configure(state="readonly")
+
+            tamanho_mb = os.path.getsize(arquivo) / (1024 * 1024)
+            self.adicionar_log(f"Arquivo selecionado: {nome_arquivo}")
+            self.adicionar_log(f"Tamanho: {tamanho_mb:.2f} MB | Caminho: {arquivo}")
+
+        self.atualizar_estado_botoes()
+
+    def on_modo_selecao_changed(self, value):
+        """Atualiza o modo de selecao conforme escolha do usuario"""
+        modo = "pasta" if "pasta" in value.lower() else "arquivo"
+        self._aplicar_modo_selecao(modo, atualizar_menu=False)
+        self.atualizar_estado_botoes()
+
+    def _aplicar_modo_selecao(self, modo, atualizar_menu=True):
+        """Aplica configuracoes visuais e reseta selecoes"""
+        self.modo_selecao_var.set(modo)
+        if atualizar_menu:
+            texto_menu = "Selecionar por pasta" if modo == "pasta" else "Selecionar por arquivo"
+            self.modo_selecao_menu.set(texto_menu)
+
+        if modo == "pasta":
+            placeholder = "Nenhuma pasta selecionada..."
+            botao = "Selecionar pasta com arquivos Excel"
+            info = "Serao processados todos os arquivos .xls e .xlsx encontrados na pasta selecionada."
+            self.arquivo_selecionado = None
+        else:
+            placeholder = "Nenhum arquivo selecionado..."
+            botao = "Selecionar arquivo Excel"
+            info = "Formatos suportados: .xls, .xlsx"
+            self.pasta_selecionada = None
+
+        self.arquivo_entry.configure(state="normal")
+        self.arquivo_entry.delete(0, "end")
+        self.arquivo_entry.configure(state="readonly", placeholder_text=placeholder)
+        self.select_button.configure(text=botao)
+        self.arquivo_info.configure(text=info)
+
+    def _listar_arquivos_excel(self, pasta):
+        """Retorna lista ordenada de arquivos Excel em uma pasta"""
+        try:
+            nomes = sorted(os.listdir(pasta))
+        except OSError:
+            return []
+
+        arquivos = []
+        for nome in nomes:
+            caminho = os.path.join(pasta, nome)
+            if os.path.isfile(caminho) and nome.lower().endswith((".xls", ".xlsx")):
+                arquivos.append(caminho)
+        return arquivos
+
+    def _obter_arquivos_para_processar(self):
+        """Retorna lista de arquivos conforme modo atual"""
+        if self.modo_selecao_var.get() == "pasta":
+            if not self.pasta_selecionada:
+                return []
+            return self._listar_arquivos_excel(self.pasta_selecionada)
+        if self.arquivo_selecionado:
+            return [self.arquivo_selecionado]
+        return []
     def executar_automacao(self):
         """Executa a automação selecionada"""
         if not self.validar_inputs():
@@ -622,59 +704,74 @@ class AutomacaoBradescoApp(ctk.CTk):
 
 
     def _executar_automacao_thread(self):
-        """Executa a automação em thread separada"""
+        """Executa a automacao em thread separada"""
         try:
-            tipo = self.automacao_var.get()
-            arquivo = self.arquivo_selecionado
-            
-            self.adicionar_log("🚀 Iniciando processamento...")
-            self.atualizar_progresso(0.1)
-            
-            # Validação do tipo de arquivo
-            self.adicionar_log("🔍 Validando compatibilidade do arquivo...")
-            arquivo_valido, msg_erro = self._validar_tipo_arquivo(arquivo, tipo)
-            
-            if not arquivo_valido:
-                self.adicionar_log(f"❌ {msg_erro}")
-                self.adicionar_log("💡 Verifique se você selecionou o arquivo correto para o tipo de automação escolhido.")
-                messagebox.showerror("Arquivo Incompatível", 
-                    f"{msg_erro}\n\n"
-                    f"Tipo selecionado: {tipo}\n"
-                    f"Arquivo: {os.path.basename(arquivo)}\n\n"
-                    f"Por favor, selecione o arquivo correto ou altere o tipo de automação.")
+            tipo_selecionado = self.automacao_var.get()
+            arquivos = self._obter_arquivos_para_processar()
+            total_arquivos = len(arquivos)
+
+            if total_arquivos == 0:
+                self.adicionar_log("Nenhum arquivo encontrado para processamento.")
                 return
-            elif msg_erro:
-                self.adicionar_log(msg_erro)
-            else:
-                self.adicionar_log("✅ Arquivo compatível com o tipo de automação selecionado")
-            
-            if tipo == "Beneficiário":
-                self._executar_beneficiario(arquivo)
-            elif tipo == "Procedimentos":
-                self._executar_procedimentos(arquivo)
-            elif tipo == "Prestadores":
-                self._executar_prestadores(arquivo)
-            elif tipo == "Consultas":
-                self._executar_consultas(arquivo)
-            elif tipo == "Diagnósticos":
-                self._executar_diagnosticos(arquivo)
-            elif tipo == "Exames":
-                self._executar_exames(arquivo)
-            elif tipo == "Terapias":
-                self._executar_terapias(arquivo)
-            else:
-                self.adicionar_log(f"⚠️ Automação '{tipo}' ainda não está implementada")
-                self.adicionar_log("📧 Entre em contato com o suporte para mais informações")
-                
-        except Exception as e:
-            self.adicionar_log(f"❌ Erro durante execução: {str(e)}")
-            messagebox.showerror("Erro", f"Erro durante a automação:\n{str(e)}")
+
+            self.adicionar_log("Iniciando processamento dos arquivos selecionados...")
+
+            tipo_normalizado = tipo_selecionado.lower()
+            for indice, arquivo in enumerate(arquivos, start=1):
+                nome_base = os.path.basename(arquivo)
+                prefixo = f"[{indice}/{total_arquivos}]"
+
+                self.adicionar_log(f"{prefixo} Validando arquivo {nome_base}")
+                self.atualizar_progresso(0.1)
+
+                arquivo_valido, mensagem_validacao = self._validar_tipo_arquivo(arquivo, tipo_selecionado)
+
+                if not arquivo_valido:
+                    self.adicionar_log(f"{prefixo} Arquivo incompativel: {mensagem_validacao}")
+                    messagebox.showerror(
+                        "Arquivo incompativel",
+                        f"{mensagem_validacao}\\n\\nTipo selecionado: {tipo_selecionado}\\nArquivo: {nome_base}"
+                    )
+                    continue
+
+                if mensagem_validacao:
+                    self.adicionar_log(f"{prefixo} Aviso: {mensagem_validacao}")
+                else:
+                    self.adicionar_log(f"{prefixo} Arquivo compativel com a automacao selecionada")
+
+                self.adicionar_log(f"{prefixo} Executando automacao para {nome_base}")
+
+                try:
+                    if tipo_normalizado.startswith("benefici"):
+                        self._executar_beneficiario(arquivo)
+                    elif tipo_normalizado.startswith("proced"):
+                        self._executar_procedimentos(arquivo)
+                    elif tipo_normalizado.startswith("prestad"):
+                        self._executar_prestadores(arquivo)
+                    elif tipo_normalizado.startswith("consult"):
+                        self._executar_consultas(arquivo)
+                    elif tipo_normalizado.startswith("diagn"):
+                        self._executar_diagnosticos(arquivo)
+                    elif tipo_normalizado.startswith("exame"):
+                        self._executar_exames(arquivo)
+                    elif tipo_normalizado.startswith("terap"):
+                        self._executar_terapias(arquivo)
+                    else:
+                        self.adicionar_log(f"{prefixo} Automacao \"{tipo_selecionado}\" ainda nao esta implementada.")
+                        break
+                except Exception as erro_arquivo:
+                    self.adicionar_log(f"{prefixo} Erro durante o processamento: {erro_arquivo}")
+                    messagebox.showerror("Erro", f"Erro durante a automacao:\\n{erro_arquivo}")
+                else:
+                    self.adicionar_log(f"{prefixo} Processamento concluido para {nome_base}")
+
+        except Exception as erro:
+            self.adicionar_log(f"Erro durante execucao: {erro}")
+            messagebox.showerror("Erro", f"Erro durante a automacao:\\n{erro}")
         finally:
             self.executando = False
             self.atualizar_progresso(0)
             self.after(0, self.atualizar_estado_botoes)
-            
-    @contextlib.contextmanager
     def _capturar_saida_console(self):
         """Context manager para capturar a saída do console (prints)"""
         old_stdout = sys.stdout
@@ -954,129 +1051,108 @@ class AutomacaoBradescoApp(ctk.CTk):
             raise Exception(f"Erro na automação de beneficiários: {str(e)}")
             
     def validar_inputs(self):
-        """Valida se todos os inputs necessários estão preenchidos"""
-        if not self.arquivo_selecionado:
-            self.adicionar_log("⚠️ Erro: Nenhum arquivo selecionado!")
-            messagebox.showwarning("Atenção", "Por favor, selecione um arquivo Excel primeiro.")
-            return False
-            
-        if not os.path.exists(self.arquivo_selecionado):
-            self.adicionar_log("⚠️ Erro: Arquivo não encontrado!")
-            messagebox.showerror("Erro", "O arquivo selecionado não foi encontrado.")
-            return False
-            
-        # Validação específica para beneficiários
-        if self.automacao_var.get() == "Beneficiário" and not MODULOS_DISPONIVEL:
-            self.adicionar_log("⚠️ Erro: Módulos de beneficiários não disponíveis!")
-            messagebox.showerror("Erro", 
-                "Os módulos de automação de beneficiários não estão disponíveis.\n\n"
-                "Verifique se existem os arquivos:\n"
-                "• beneficiarios/ler_excel.py\n"
-                "• beneficiarios/append_excel.py")
-            return False
-        
-        # Validação específica para prestadores    
-        if self.automacao_var.get() == "Prestadores" and not MODULOS_DISPONIVEL:
-            self.adicionar_log("⚠️ Erro: Módulos de prestadores não disponíveis!")
-            messagebox.showerror("Erro", 
-                "Os módulos de automação de prestadores não estão disponíveis.\n\n"
-                "Verifique se existem os arquivos:\n"
-                "• prestadores/ler_excel.py\n"
-                "• prestadores/append_excel.py")
-            return False
-            
-        # Validação específica para procedimentos
-        if self.automacao_var.get() == "Procedimentos" and not MODULOS_DISPONIVEL:
-            self.adicionar_log("⚠️ Erro: Módulos de procedimentos não disponíveis!")
-            messagebox.showerror("Erro", 
-                "Os módulos de automação de procedimentos não estão disponíveis.\n\n"
-                "Verifique se existem os arquivos:\n"
-                "• procedimentos/ler_excel.py\n"
-                "• procedimentos/append_excel.py")
-            return False
-            
-        if self.automacao_var.get() == "Consultas" and not MODULOS_DISPONIVEL:
-            self.adicionar_log("Erro: Módulos de consultas não disponíveis!")
+        """Valida se todos os inputs necessarios estao preenchidos"""
+        modo = self.modo_selecao_var.get()
+        if modo == "arquivo":
+            if not self.arquivo_selecionado:
+                self.adicionar_log("Erro: nenhum arquivo selecionado.")
+                messagebox.showwarning("Atencao", "Por favor, selecione um arquivo Excel primeiro.")
+                return False
+            if not os.path.exists(self.arquivo_selecionado):
+                self.adicionar_log("Erro: arquivo selecionado nao foi encontrado.")
+                messagebox.showerror("Erro", "O arquivo selecionado nao foi encontrado.")
+                return False
+        else:
+            if not self.pasta_selecionada:
+                self.adicionar_log("Erro: nenhuma pasta selecionada.")
+                messagebox.showwarning("Atencao", "Selecione uma pasta contendo arquivos Excel.")
+                return False
+            if not os.path.isdir(self.pasta_selecionada):
+                self.adicionar_log("Erro: a pasta selecionada nao existe.")
+                messagebox.showerror("Erro", "A pasta selecionada nao foi encontrada.")
+                return False
+            arquivos = self._listar_arquivos_excel(self.pasta_selecionada)
+            if not arquivos:
+                self.adicionar_log("Erro: a pasta nao possui arquivos Excel.")
+                messagebox.showwarning(
+                    "Atencao",
+                    "Nenhum arquivo .xls ou .xlsx foi encontrado na pasta selecionada."
+                )
+                return False
+
+        tipo_automacao = self.automacao_var.get().lower()
+        if tipo_automacao.startswith("benefici") and not MODULOS_DISPONIVEL:
+            self.adicionar_log("Erro: modulos de beneficiarios nao disponiveis.")
             messagebox.showerror(
                 "Erro",
-                "Os módulos de automação de consultas não estão disponíveis.\n\n"
-                "Verifique se existem os arquivos:\n"
-                "- consultas/ler_excel.py\n"
-                "- consultas/append_excel.py"
+                "Os modulos de beneficiarios nao estao disponiveis.\n\n"
+                "Verifique se os arquivos existem:\n"
+                " - beneficiarios/ler_excel.py\n"
+                " - beneficiarios/append_excel.py"
             )
             return False
-
-        if self.automacao_var.get() == "Diagnósticos" and not MODULOS_DISPONIVEL:
-            self.adicionar_log("Erro: Módulos de diagnósticos não disponíveis!")
+        if tipo_automacao.startswith("prestad") and not MODULOS_DISPONIVEL:
+            self.adicionar_log("Erro: modulos de prestadores nao disponiveis.")
             messagebox.showerror(
                 "Erro",
-                "Os módulos de automação de diagnósticos não estão disponíveis.\n\n"
-                "Verifique se existem os arquivos:\n"
-                "- diagnosticos/ler_excel.py\n"
-                "- diagnosticos/append_excel.py"
+                "Os modulos de prestadores nao estao disponiveis.\n\n"
+                "Verifique se os arquivos existem:\n"
+                " - prestadores/ler_excel.py\n"
+                " - prestadores/append_excel.py"
             )
             return False
-
-        if self.automacao_var.get() == "Exames" and not MODULOS_DISPONIVEL:
-            self.adicionar_log("Erro: Módulos de exames não disponíveis!")
+        if tipo_automacao.startswith("proced") and not MODULOS_DISPONIVEL:
+            self.adicionar_log("Erro: modulos de procedimentos nao disponiveis.")
             messagebox.showerror(
                 "Erro",
-                "Os módulos de automação de exames não estão disponíveis.\n\n"
-                "Verifique se existem os arquivos:\n"
-                "- exames/ler_excel.py\n"
-                "- exames/append_excel.py"
-            )
-            return False
-
-        if self.automacao_var.get() == "Terapias" and not MODULOS_DISPONIVEL:
-            self.adicionar_log("Erro: Módulos de terapias não disponíveis!")
-            messagebox.showerror(
-                "Erro",
-                "Os módulos de automação de terapias não estão disponíveis.\n\n"
-                "Verifique se existem os arquivos:\n"
-                "- terapias/ler_excel.py\n"
-                "- terapias/append_excel.py"
+                "Os modulos de procedimentos nao estao disponiveis.\n\n"
+                "Verifique se os arquivos existem:\n"
+                " - procedimentos/ler_excel.py\n"
+                " - procedimentos/append_excel.py"
             )
             return False
 
         return True
-        
     def atualizar_estado_botoes(self):
-        """Atualiza o estado dos botões baseado no estado atual"""
+        """Atualiza o estado dos botoes baseado no estado atual"""
         if self.executando:
             self.executar_button.configure(
                 state="disabled",
-                text="⏳ PROCESSANDO...",
+                text="Processando...",
                 fg_color=["#6c757d", "#495057"]
             )
             self.select_button.configure(state="disabled")
             self.limpar_button.configure(state="disabled")
+            self.modo_selecao_menu.configure(state="disabled")
         else:
             self.executar_button.configure(
                 state="normal",
-                text="🚀 EXECUTAR AUTOMAÇÃO",
+                text="Executar automacao",
                 fg_color=["#007bff", "#0056b3"]
             )
             self.select_button.configure(state="normal")
             self.limpar_button.configure(state="normal")
-            
+            self.modo_selecao_menu.configure(state="normal")
+
     def atualizar_progresso(self, valor):
         """Atualiza a barra de progresso"""
         self.after(0, lambda: self.progress_bar.set(valor))
         
     def limpar_tudo(self):
-        """Limpa todas as seleções e logs"""
+        """Limpa todas as selecoes e logs"""
         self.arquivo_selecionado = None
-        self.automacao_var.set("Beneficiário")
-        
-        self.arquivo_entry.configure(state="normal")
-        self.arquivo_entry.delete(0, "end")
-        self.arquivo_entry.configure(state="readonly", placeholder_text="📄 Nenhum arquivo selecionado...")
-        
+        self.pasta_selecionada = None
+        if hasattr(self, "automacao_padrao"):
+            self.automacao_var.set(self.automacao_padrao)
+        else:
+            self.automacao_var.set(self.automacao_var.get())
+
+        self._aplicar_modo_selecao("arquivo")
+
         self.log_box.delete(1.0, "end")
         self.progress_bar.set(0)
-        
-        self.adicionar_log("🧹 Sistema limpo - Pronto para nova automação")
+
+        self.adicionar_log("Sistema limpo - pronto para nova automacao")
         self.atualizar_estado_botoes()
 
     def adicionar_log(self, mensagem):
